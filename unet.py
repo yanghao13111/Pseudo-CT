@@ -2,24 +2,22 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-
 # Residual Block
 class Res(nn.Module):
     def __init__(self, filters):
         super(Res, self).__init__()
         self.res_block = nn.Sequential(
-            nn.BatchNorm2d(filters),
-            nn.LeakyReLU(0.01),
+            nn.Conv2d(filters, filters, kernel_size=3, padding=1, bias=False),  # 先卷積
+            nn.BatchNorm2d(filters),  # 再正規化
+            nn.LeakyReLU(0.01),  # 最後激活
             nn.Conv2d(filters, filters, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(filters),
-            nn.LeakyReLU(0.01),
-            nn.Conv2d(filters, filters, kernel_size=3, padding=1, bias=False)
+            nn.LeakyReLU(0.01)
         )
 
     def forward(self, img_in):
         img_out = self.res_block(img_in)
         return img_in + img_out  # 跳躍連接
-
 
 # 初始化區塊
 class Init(nn.Module):
@@ -35,47 +33,41 @@ class Init(nn.Module):
         img_out = self.res(img_out)
         return img_out
 
-
 # 最終輸出區塊
 class Final(nn.Module):
     def __init__(self, filters):
         super(Final, self).__init__()
-        self.final_block = nn.Conv2d(filters, 1, kernel_size=1, bias=False)  # 1 channel for CT
+        self.final_block = nn.Sequential(
+            nn.Conv2d(filters, 1, kernel_size=1, bias=False),  # 1 channel for CT
+            nn.Tanh()  # 使用 Tanh 作為輸出激活函數
+        )
 
     def forward(self, img_in):
         img_out = self.final_block(img_in)
         return img_out
 
+# 預訓練 UNet
+def Pretrain():
+    # 從 torch.hub 中加載預訓練模型
+    model = torch.hub.load('milesial/Pytorch-UNet', 'unet_carvana', pretrained=True, scale=0.5, verbose=False)
+    
+    # 修改輸入層
+    in_filters = model.inc.double_conv[3].out_channels
+    model.inc = Init(in_filters)  # 自定義的 Init 輸入層
 
-# UNet 模型架構
-class UNet(nn.Module):
-    def __init__(self, in_channels=7, out_channels=1, filters=64):
-        super(UNet, self).__init__()
-        self.init = Init(filters)
-        self.down1 = nn.Conv2d(filters, filters * 2, kernel_size=3, stride=2, padding=1)
-        self.res1 = Res(filters * 2)
-        self.down2 = nn.Conv2d(filters * 2, filters * 4, kernel_size=3, stride=2, padding=1)
-        self.res2 = Res(filters * 4)
+    # 修改輸出層
+    out_filters = model.outc.conv.in_channels
+    model.outc = Final(out_filters)  # 自定義的 Final 輸出層
 
-        self.up1 = nn.ConvTranspose2d(filters * 4, filters * 2, kernel_size=2, stride=2)
-        self.res3 = Res(filters * 2)
-        self.up2 = nn.ConvTranspose2d(filters * 2, filters, kernel_size=2, stride=2)
-        self.final = Final(filters)
+    return model
 
-    def forward(self, img_in):
-        x1 = self.init(img_in)
-        x2 = self.res1(self.down1(x1))
-        x3 = self.res2(self.down2(x2))
-
-        x = self.up1(x3) + x2  # 跳躍連接
-        x = self.res3(x)
-        x = self.up2(x) + x1  # 跳躍連接
-
-        img_out = self.final(x)
-        return img_out
-
-
+# 主函數
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = UNet().to(device)
+    print(f'\nTraining on: {device}\n')
+
+    # 加載預訓練模型並修改輸入輸出層
+    model = Pretrain().to(device)
+    
+    # 顯示模型結構
     print(summary(model, input_size=(7, 192, 192), batch_size=2))
