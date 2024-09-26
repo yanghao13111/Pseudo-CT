@@ -70,4 +70,14 @@ if __name__ == '__main__':
     model = Pretrain().to(device)
     
     # 顯示模型結構
-    print(summary(model, input_size=(7, 192, 192), batch_size=2))
+    summary(model, input_size=(7, 192, 192), batch_size=2)
+
+    with torch.no_grad():
+        test_input = torch.randn(2, 7, 192, 192).to(device)  # 模擬 MRI 數據輸入
+        test_output = model(test_input)
+        print(f"模型輸出大小: {test_output.shape}")  # 預期大小 (batch_size, 1, 192, 192)
+
+    assert model.inc.conv.in_channels == 7, "輸入通道數與 MRI 數據不匹配"
+    assert model.outc.final_block[0].out_channels == 1, "輸出通道數與 CT 數據不匹配"
+
+
